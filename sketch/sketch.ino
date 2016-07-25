@@ -1,3 +1,4 @@
+#include <avr/pgmspace.h>
 #include <Adafruit_NeoPixel.h>
 
 #define DATA_PIN 7
@@ -37,7 +38,7 @@
 #define S512(i)  S256((i)), S256((i)+256)
 #define S1000(i) S512((i)), S256((i)+512), S128((i)+768), S64((i) + 896), S32((i) + 960), S8((i) + 992)
 
-static const uint8_t heartbeatPulse[1000] = {
+const uint8_t heartbeatPulse[] PROGMEM = {
 #define S1(milliseconds) static_cast<uint8_t>( \
   255.0f * ( \
     (milliseconds >= HEARTBEAT_OFFSET_R && milliseconds - HEARTBEAT_OFFSET_R < HEARTBEAT_DURATION_R) \
@@ -67,7 +68,8 @@ void heartbeatPattern(Adafruit_NeoPixel& strip, unsigned long currentTime) {
   float blue = HEARTBEAT_COLOR_BLUE;
 
   for(long currentPixel = 0; currentPixel < NUM_LEDS; ++currentPixel) {
-    float currentBrightness = static_cast<float>(heartbeatPulse[(currentTime + currentPixel) % 1000])
+    float currentBrightness = static_cast<float>(
+        pgm_read_byte_near(heartbeatPulse + (currentTime + currentPixel) % 1000))
       / 255.0f;
 
     strip.setPixelColor(
