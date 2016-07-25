@@ -21,13 +21,35 @@
 #define HEARTBEAT_WAVE_OFFSET_R 0.0f
 #define HEARTBEAT_WAVE_DURATION_R PI
 
-#define HEARTBEAT_OFFSET_T 120
+#define HEARTBEAT_OFFSET_T (120 - 1)
 #define HEARTBEAT_DURATION_T 320
-#define HEARTBEAT_AMPLITUDE_T 0.9f
+#define HEARTBEAT_AMPLITUDE_T 0.6f
 #define HEARTBEAT_WAVE_OFFSET_T (PI * 1.5)
 #define HEARTBEAT_WAVE_DURATION_T (PI * 2)
 
+#define HEARTBEAT_WAVE_SCALE_T (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R)
+
 // Prototypes necessary to work around bug: https://github.com/arduino/arduino-builder/issues/170
+constexpr float heartbeatWaveR(unsigned long milliseconds);
+constexpr float heartbeatWaveR(unsigned long milliseconds) {
+  return sin(
+    static_cast<float>(milliseconds - HEARTBEAT_OFFSET_R) / HEARTBEAT_DURATION_R
+    * HEARTBEAT_WAVE_DURATION_R
+    + HEARTBEAT_WAVE_OFFSET_R);
+}
+
+constexpr float heartbeatWaveT(unsigned long milliseconds);
+constexpr float heartbeatWaveT(unsigned long milliseconds) {
+  return (
+    HEARTBEAT_WAVE_SCALE_T
+    * (sin(
+        static_cast<float>(milliseconds - HEARTBEAT_OFFSET_T) / HEARTBEAT_DURATION_T
+        * HEARTBEAT_WAVE_DURATION_T
+        + HEARTBEAT_WAVE_OFFSET_T)
+      + 1.0f)
+    / 2.0f);
+}
+
 template<typename T, typename U> constexpr bool isWithinDuration(T value, U duration, U offset = 0);
 template<typename T, typename U> constexpr bool isWithinDuration(T value, U duration, U offset = 0) {
   return value >= offset && value - offset < duration;
@@ -36,16 +58,12 @@ template<typename T, typename U> constexpr bool isWithinDuration(T value, U dura
 constexpr uint8_t heartbeatPulseAtTime(unsigned long milliseconds);
 constexpr uint8_t heartbeatPulseAtTime(unsigned long milliseconds) {
   return static_cast<uint8_t>(
-    255.0f * (
-      isWithinDuration(milliseconds, HEARTBEAT_DURATION_R, HEARTBEAT_OFFSET_R)
-        ? sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_R)
-              / HEARTBEAT_DURATION_R * HEARTBEAT_WAVE_DURATION_R + HEARTBEAT_WAVE_OFFSET_R)
-        : (
-          isWithinDuration(milliseconds, HEARTBEAT_DURATION_T, HEARTBEAT_OFFSET_T)
-            ? (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R)
-              * sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_T)
-                    / HEARTBEAT_DURATION_T * HEARTBEAT_WAVE_DURATION_T + HEARTBEAT_WAVE_OFFSET_T)
-            : 0.0f)));
+    255.0f
+    * (isWithinDuration(milliseconds, HEARTBEAT_DURATION_R, HEARTBEAT_OFFSET_R)
+         ? heartbeatWaveR(milliseconds)
+         : (isWithinDuration(milliseconds, HEARTBEAT_DURATION_T, HEARTBEAT_OFFSET_T)
+              ? heartbeatWaveT(milliseconds)
+              : 0.0f)));
 }
 
 // Helpers to statically generate our tables
@@ -79,9 +97,9 @@ void heartbeatPattern(Adafruit_NeoPixel& strip, unsigned long currentTime) {
   float blue = HEARTBEAT_COLOR_BLUE;
 
   for(long currentPixel = 0; currentPixel < NUM_LEDS; ++currentPixel) {
-    float currentBrightness = static_cast<float>(
-        pgm_read_byte_near(heartbeatPulse + (currentTime + currentPixel) % 1000))
-      / 255.0f;
+    float currentBrightness = (
+      static_cast<float>(pgm_read_byte_near(heartbeatPulse + (currentTime + currentPixel) % 1000))
+      / 255.0f);
 
     strip.setPixelColor(
       currentPixel,
