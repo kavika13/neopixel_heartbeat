@@ -27,7 +27,28 @@
 #define HEARTBEAT_WAVE_OFFSET_T (PI * 1.5)
 #define HEARTBEAT_WAVE_DURATION_T (PI * 2)
 
-// Helpers to statically generate our table
+// Prototypes necessary to work around bug: https://github.com/arduino/arduino-builder/issues/170
+template<typename T, typename U> constexpr bool isWithinDuration(T value, U duration, U offset = 0);
+template<typename T, typename U> constexpr bool isWithinDuration(T value, U duration, U offset = 0) {
+  return value >= offset && value - offset < duration;
+}
+
+constexpr uint8_t heartbeatPulseAtTime(unsigned long milliseconds);
+constexpr uint8_t heartbeatPulseAtTime(unsigned long milliseconds) {
+  return static_cast<uint8_t>(
+    255.0f * (
+      isWithinDuration(milliseconds, HEARTBEAT_DURATION_R, HEARTBEAT_OFFSET_R)
+        ? sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_R)
+              / HEARTBEAT_DURATION_R * HEARTBEAT_WAVE_DURATION_R + HEARTBEAT_WAVE_OFFSET_R)
+        : (
+          isWithinDuration(milliseconds, HEARTBEAT_DURATION_T, HEARTBEAT_OFFSET_T)
+            ? (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R)
+              * sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_T)
+                    / HEARTBEAT_DURATION_T * HEARTBEAT_WAVE_DURATION_T + HEARTBEAT_WAVE_OFFSET_T)
+            : 0.0f)));
+}
+
+// Helpers to statically generate our tables
 #define S4(i)    S1((i)),   S1((i)+1),     S1((i)+2),     S1((i)+3)
 #define S8(i)    S4((i)),   S4((i)+4)
 #define S16(i)   S8((i)),   S8((i)+8)
@@ -39,17 +60,7 @@
 #define S1000(i) S512((i)), S256((i)+512), S128((i)+768), S64((i) + 896), S32((i) + 960), S8((i) + 992)
 
 const uint8_t heartbeatPulse[] PROGMEM = {
-#define S1(milliseconds) static_cast<uint8_t>( \
-  255.0f * ( \
-    (milliseconds >= HEARTBEAT_OFFSET_R && milliseconds - HEARTBEAT_OFFSET_R < HEARTBEAT_DURATION_R) \
-      ? sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_R) \
-        / HEARTBEAT_DURATION_R * HEARTBEAT_WAVE_DURATION_R + HEARTBEAT_WAVE_OFFSET_R) \
-      : ( \
-        (milliseconds >= HEARTBEAT_OFFSET_T && milliseconds - HEARTBEAT_OFFSET_T < HEARTBEAT_DURATION_T) \
-        ? (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R) \
-          * sin(static_cast<float>(milliseconds - HEARTBEAT_OFFSET_T) \
-          / HEARTBEAT_DURATION_T * HEARTBEAT_WAVE_DURATION_T + HEARTBEAT_WAVE_OFFSET_T) \
-        : 0.0f)))
+#define S1(milliseconds) (heartbeatPulseAtTime(milliseconds))
   S1000(0)
 #undef S1
 };
