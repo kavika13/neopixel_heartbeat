@@ -238,7 +238,7 @@ private:
     if(rhs) {
       --rhs;
     }
- 
+
     return lhs + rhs;
   }
 };
@@ -265,10 +265,6 @@ const Color3 Color3::Cyan = Color3(0, 255, 255);
 // R = 0-45 ms, 2.7 at peak (modeled with sine curve, zero-to-zero)
 // T = 120-440 ms, 0.9 at peak (modeled with sine curve, bottom-to-top-to-bottom)
 
-#define HEARTBEAT_COLOR_RED 114
-#define HEARTBEAT_COLOR_GREEN 139
-#define HEARTBEAT_COLOR_BLUE 27
-
 #define HEARTBEAT_OFFSET_R 0
 #define HEARTBEAT_DURATION_R 45
 #define HEARTBEAT_AMPLITUDE_R 2.7f
@@ -283,7 +279,12 @@ const Color3 Color3::Cyan = Color3(0, 255, 255);
 
 #define HEARTBEAT_WAVE_SCALE_T (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R)
 
-#define HEARTBEAT_UPDATE_RATE 1000 / 60
+#define HEARTBEAT_UPDATES_PER_SECOND 50.0f
+#define HEARTBEAT_DURATION_UPDATE (1000.0f / HEARTBEAT_UPDATES_PER_SECOND)
+#define HEARTBEAT_DURATION_MAX_STRESS_CHANGE (1.0f * 1000.0f)
+#define HEARTBEAT_NUM_UPDATES_MAX_STRESS_CHANGE (HEARTBEAT_DURATION_MAX_STRESS_CHANGE / HEARTBEAT_DURATION_UPDATE)
+#define HEARTBEAT_SCALED_STRESS_MAX_VELOCITY static_cast<uint16_t>(65535.0f / HEARTBEAT_NUM_UPDATES_MAX_STRESS_CHANGE)
+#define HEARTBEAT_SCALED_STRESS_MAX_IMPULSE 128
 
 // Prototypes necessary to work around bug: https://github.com/arduino/arduino-builder/issues/170
 constexpr float heartbeatWaveR(unsigned long milliseconds);
@@ -339,32 +340,356 @@ const uint8_t heartbeatPulse[] PROGMEM = {
 #undef S1
 };
 
-const Color3 heartbeatBaseColor(
-  HEARTBEAT_COLOR_RED,
-  HEARTBEAT_COLOR_GREEN,
-  HEARTBEAT_COLOR_BLUE);
-const Color3 heartbeatStressColor(Color3::Red);
+const uint8_t heartbeatBackgroundColors[] PROGMEM = {
+  // Generated lerp in LAB color space.
 
-Color3 heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long currentTime);
-Color3 heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long currentTime) {
-  // Using 1024ms per "second" because the compiler turns % 1024 into bitwise math instead of a divide
-  return Color3(pgm_read_byte_near(heartbeatPulse + (currentTime + currentPixelIndex) % 1024));
+  // 1. Make a virtualenv and activate it
+  // 2. `pip install colormath`
+  // 3. run this script:
+
+  // #!/usr/bin/env python
+  // from colormath.color_objects import LabColor, sRGBColor
+  // from colormath.color_conversions import convert_color
+
+  // # Non-stressed color:
+  // HEARTBEAT_COLOR_RED = 114
+  // HEARTBEAT_COLOR_GREEN = 139
+  // HEARTBEAT_COLOR_BLUE = 27
+
+  // rgb1 = sRGBColor(
+  //     HEARTBEAT_COLOR_RED / 255.0,
+  //     HEARTBEAT_COLOR_GREEN / 255.0,
+  //     HEARTBEAT_COLOR_BLUE / 255.0)
+  // lab1 = convert_color(rgb1, LabColor)
+
+  // rgb1 = sRGBColor(1.0, 0.0, 0.0)
+  // lab1 = convert_color(rgb1, LabColor)
+
+  // # Maximum stressed color
+  // rgb2 = sRGBColor(0.0, 1.0, 0.0)
+  // lab2 = convert_color(rgb2, LabColor)
+
+  // def interpolate_component(source, target, weight):
+  //     return source + (target - source) * weight
+
+  // def interpolate_lab(source, target, weight):
+  //     return LabColor(
+  //         interpolate_component(source.lab_l, target.lab_l, weight),
+  //         interpolate_component(source.lab_a, target.lab_a, weight),
+  //         interpolate_component(source.lab_b, target.lab_b, weight),
+  //         source.observer,
+  //         source.illuminant)
+
+  // def rgb8(srgb_color):
+  //     return [
+  //         int(255.0 * float('%.4f ' % srgb_color.rgb_r)),
+  //         int(255.0 * float('%.4f ' % srgb_color.rgb_g)),
+  //         int(255.0 * float('%.4f ' % srgb_color.rgb_b))]
+
+  // gradient = [
+  //     rgb8(convert_color(interpolate_lab(lab1, lab2, i / 255.0), sRGBColor))
+  //     for i in range(256)]
+
+  // for c in gradient:
+  //     print '{}, {}, {},'.format(c[0], c[1], c[2])
+
+  114, 139, 27,
+  114, 138, 26,
+  115, 138, 26,
+  116, 138, 26,
+  116, 138, 26,
+  117, 138, 26,
+  118, 137, 26,
+  119, 137, 26,
+  119, 137, 25,
+  120, 137, 25,
+  121, 137, 25,
+  122, 136, 25,
+  122, 136, 25,
+  123, 136, 25,
+  124, 136, 25,
+  124, 136, 24,
+  125, 135, 24,
+  126, 135, 24,
+  126, 135, 24,
+  127, 135, 24,
+  128, 135, 24,
+  128, 134, 24,
+  129, 134, 23,
+  130, 134, 23,
+  130, 134, 23,
+  131, 134, 23,
+  132, 133, 23,
+  132, 133, 23,
+  133, 133, 23,
+  134, 133, 22,
+  134, 133, 22,
+  135, 132, 22,
+  136, 132, 22,
+  136, 132, 22,
+  137, 132, 22,
+  138, 132, 22,
+  138, 131, 21,
+  139, 131, 21,
+  140, 131, 21,
+  140, 131, 21,
+  141, 130, 21,
+  142, 130, 21,
+  142, 130, 21,
+  143, 130, 20,
+  143, 130, 20,
+  144, 129, 20,
+  145, 129, 20,
+  145, 129, 20,
+  146, 129, 20,
+  147, 128, 20,
+  147, 128, 19,
+  148, 128, 19,
+  148, 128, 19,
+  149, 128, 19,
+  150, 127, 19,
+  150, 127, 19,
+  151, 127, 19,
+  151, 127, 18,
+  152, 126, 18,
+  153, 126, 18,
+  153, 126, 18,
+  154, 126, 18,
+  154, 125, 18,
+  155, 125, 18,
+  156, 125, 18,
+  156, 125, 17,
+  157, 124, 17,
+  157, 124, 17,
+  158, 124, 17,
+  159, 124, 17,
+  159, 123, 17,
+  160, 123, 16,
+  160, 123, 16,
+  161, 123, 16,
+  161, 122, 16,
+  162, 122, 16,
+  163, 122, 16,
+  163, 122, 16,
+  164, 121, 15,
+  164, 121, 15,
+  165, 121, 15,
+  165, 121, 15,
+  166, 120, 15,
+  167, 120, 15,
+  167, 120, 15,
+  168, 120, 14,
+  168, 119, 14,
+  169, 119, 14,
+  169, 119, 14,
+  170, 118, 14,
+  171, 118, 14,
+  171, 118, 14,
+  172, 118, 13,
+  172, 117, 13,
+  173, 117, 13,
+  173, 117, 13,
+  174, 116, 13,
+  174, 116, 13,
+  175, 116, 13,
+  176, 116, 12,
+  176, 115, 12,
+  177, 115, 12,
+  177, 115, 12,
+  178, 114, 12,
+  178, 114, 12,
+  179, 114, 11,
+  179, 114, 11,
+  180, 113, 11,
+  181, 113, 11,
+  181, 113, 11,
+  182, 112, 11,
+  182, 112, 11,
+  183, 112, 10,
+  183, 111, 10,
+  184, 111, 10,
+  184, 111, 10,
+  185, 110, 10,
+  185, 110, 10,
+  186, 110, 10,
+  186, 109, 9,
+  187, 109, 9,
+  188, 109, 9,
+  188, 108, 9,
+  189, 108, 9,
+  189, 108, 9,
+  190, 107, 8,
+  190, 107, 8,
+  191, 107, 8,
+  191, 106, 8,
+  192, 106, 8,
+  192, 106, 8,
+  193, 105, 8,
+  193, 105, 8,
+  194, 105, 7,
+  194, 104, 7,
+  195, 104, 7,
+  195, 104, 7,
+  196, 103, 7,
+  196, 103, 7,
+  197, 102, 7,
+  198, 102, 6,
+  198, 102, 6,
+  199, 101, 6,
+  199, 101, 6,
+  200, 101, 6,
+  200, 100, 6,
+  201, 100, 6,
+  201, 99, 6,
+  202, 99, 5,
+  202, 99, 5,
+  203, 98, 5,
+  203, 98, 5,
+  204, 97, 5,
+  204, 97, 5,
+  205, 97, 5,
+  205, 96, 5,
+  206, 96, 5,
+  206, 95, 4,
+  207, 95, 4,
+  207, 95, 4,
+  208, 94, 4,
+  208, 94, 4,
+  209, 93, 4,
+  209, 93, 4,
+  210, 92, 4,
+  210, 92, 4,
+  211, 91, 4,
+  211, 91, 3,
+  212, 91, 3,
+  212, 90, 3,
+  213, 90, 3,
+  213, 89, 3,
+  214, 89, 3,
+  214, 88, 3,
+  215, 88, 3,
+  215, 87, 3,
+  216, 87, 3,
+  216, 86, 3,
+  217, 86, 2,
+  217, 85, 2,
+  218, 85, 2,
+  218, 84, 2,
+  219, 84, 2,
+  219, 83, 2,
+  220, 83, 2,
+  220, 82, 2,
+  221, 82, 2,
+  221, 81, 2,
+  222, 80, 2,
+  222, 80, 2,
+  223, 79, 2,
+  223, 79, 2,
+  224, 78, 1,
+  224, 78, 1,
+  225, 77, 1,
+  225, 76, 1,
+  226, 76, 1,
+  226, 75, 1,
+  227, 75, 1,
+  227, 74, 1,
+  228, 73, 1,
+  228, 73, 1,
+  229, 72, 1,
+  229, 71, 1,
+  230, 71, 1,
+  230, 70, 1,
+  231, 69, 1,
+  231, 69, 1,
+  232, 68, 1,
+  232, 67, 0,
+  233, 67, 0,
+  233, 66, 0,
+  234, 65, 0,
+  234, 64, 0,
+  235, 64, 0,
+  235, 63, 0,
+  236, 62, 0,
+  236, 61, 0,
+  237, 61, 0,
+  237, 60, 0,
+  238, 59, 0,
+  238, 58, 0,
+  239, 57, 0,
+  239, 56, 0,
+  240, 55, 0,
+  240, 55, 0,
+  241, 54, 0,
+  241, 53, 0,
+  242, 52, 0,
+  242, 51, 0,
+  242, 50, 0,
+  243, 49, 0,
+  243, 47, 0,
+  244, 46, 0,
+  244, 45, 0,
+  245, 44, 0,
+  245, 43, 0,
+  246, 42, 0,
+  246, 40, 0,
+  247, 39, 0,
+  247, 37, 0,
+  248, 36, 0,
+  248, 35, 0,
+  249, 33, 0,
+  249, 31, 0,
+  250, 30, 0,
+  250, 28, 0,
+  251, 26, 0,
+  251, 23, 0,
+  252, 21, 0,
+  252, 19, 0,
+  253, 16, 0,
+  253, 12, 0,
+  254, 8, 0,
+  254, 4, 0,
+  255, 0, 0,
+};
+
+Color3 heartbeatBackgroundColor(uint8_t stress) {
+  return Color3(
+    pgm_read_byte_near(heartbeatBackgroundColors + (stress * 3) + 0),
+    pgm_read_byte_near(heartbeatBackgroundColors + (stress * 3) + 1),
+    pgm_read_byte_near(heartbeatBackgroundColors + (stress * 3) + 2));
+}
+
+Color3 heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long animationTime);
+Color3 heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long animationTime) {
+  // Using 1024ms per heartbeat because the compiler turns % 1024 into bitwise math instead of a divide
+  return Color3(pgm_read_byte_near(heartbeatPulse + (animationTime + currentPixelIndex) % 1024));
 }
 
 void updateStress(uint8_t& stress) {
-  // TODO: Calculate good values for 60fps
-  static int8_t stressVelocity = 0;
-  int8_t stressAcceleration = random(10 + 1) - 5;
+  static int16_t stressVelocity = 0;
+  int16_t stressAcceleration = random(HEARTBEAT_SCALED_STRESS_MAX_IMPULSE * 2 + 1)
+    - HEARTBEAT_SCALED_STRESS_MAX_IMPULSE;
 
   stressVelocity += stressAcceleration;
-  stressVelocity = std::clamp(stressVelocity, (int8_t)-85, (int8_t)85);
+  stressVelocity = std::clamp(
+    stressVelocity,
+    static_cast<int16_t>(-HEARTBEAT_SCALED_STRESS_MAX_VELOCITY),
+    static_cast<int16_t>(HEARTBEAT_SCALED_STRESS_MAX_VELOCITY));
 
-  stress = std::clamp(static_cast<int16_t>(stress) + stressVelocity, 0, 255);
+  stress = std::clamp(
+    (static_cast<int32_t>(stress) * 256 + stressVelocity) / 256,
+    static_cast<int32_t>(0),
+    static_cast<int32_t>(255));
+
+  // If stress got clamped, reduce velocity. Greatly reduces top/bottom stickiness
+  if((stress == 255 && stressVelocity > 0) || (stress == 0 && stressVelocity < 0)) {
+    stressVelocity /= 2;
+  }
 }
 
 void heartbeatPattern(Adafruit_NeoPixel& strip, const unsigned long currentTime, unsigned long timeOffset = 0) {
   static unsigned long lastTime = currentTime;
   static unsigned long updateTime = 0;
+  static unsigned long animationTime = 0;
   static unsigned long fpsTime = 0;
 
   unsigned long deltaTime = currentTime - lastTime;
@@ -374,8 +699,8 @@ void heartbeatPattern(Adafruit_NeoPixel& strip, const unsigned long currentTime,
 
   static uint8_t stress = 0;
 
-  if(updateTime > HEARTBEAT_UPDATE_RATE) {
-    updateTime -= HEARTBEAT_UPDATE_RATE;
+  if(updateTime > HEARTBEAT_DURATION_UPDATE) {
+    updateTime -= HEARTBEAT_DURATION_UPDATE;
     updateStress(stress);
   }
 
@@ -384,11 +709,15 @@ void heartbeatPattern(Adafruit_NeoPixel& strip, const unsigned long currentTime,
 
   if(fpsTime > 1000) {
     fpsTime -= 1000;
+    Serial.print("heartbeatPattern FPS: ");
     Serial.println(frameCounter);
     frameCounter = 0;
   }
 
-  unsigned long animationTime = currentTime * (stress / 255 + 1); // TODO: stress / 255 = 0 or 1 right now...
+  // Integer version of: deltaTime * ([0.0, 2.0] + 1)
+  animationTime += (deltaTime * ((stress + 1) * 2 + 256) * 256) / 65536;
+  // Using 1024ms per heartbeat because the compiler turns % 1024 into bitwise math instead of a divide
+  animationTime %= 1024;
 
   for(long currentPixelIndex = 0; currentPixelIndex < NUM_LEDS; ++currentPixelIndex) {
     Color3 pulseColor(
@@ -397,8 +726,7 @@ void heartbeatPattern(Adafruit_NeoPixel& strip, const unsigned long currentTime,
     pulseColor.r = 0;
     pulseColor.b = 0;
 
-    Color3 backgroundColor(
-      lerp(heartbeatBaseColor, heartbeatStressColor, stress));
+    Color3 backgroundColor(heartbeatBackgroundColor(stress));
 
     Color3 pixelColor(pulseColor + backgroundColor);
 
