@@ -37,6 +37,22 @@ const CHSV backgroundCalmColor(95, 209, 182);
 const CHSV backgroundExcitedColor(254, 92, 236);
 const CHSV backgroundIntenseColor(222, 209, 127);
 
+struct HeartbeatData {
+  HeartbeatData()
+    : updateTime(0)
+    , animationTime(0)
+    , animationOffset(0)
+    , stress(0)
+    , stressVelocity(0) {
+  }
+
+  unsigned long updateTime;
+  unsigned long animationTime;
+  unsigned long animationOffset;
+  uint8_t stress;
+  int16_t stressVelocity;
+};
+
 // Roughly approximate a heart beat:
 // https://en.wikipedia.org/wiki/QT_interval
 // https://meds.queensu.ca/central/assets/modules/ECG/normal_ecg.html
@@ -125,64 +141,47 @@ CRGB heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long animatio
   return CRGB(value, value, value);
 }
 
-void updateStress(uint8_t& stress) {
-  static int16_t stressVelocity = 0;
+void updateStress(HeartbeatData& data) {
   int16_t stressAcceleration = random(HEARTBEAT_SCALED_STRESS_MAX_IMPULSE * 2 + 1)
     - HEARTBEAT_SCALED_STRESS_MAX_IMPULSE;
 
-  stressVelocity += stressAcceleration;
-  stressVelocity = std::clamp(
-    stressVelocity,
+  data.stressVelocity += stressAcceleration;
+  data.stressVelocity = std::clamp(
+    data.stressVelocity,
     static_cast<int16_t>(-HEARTBEAT_SCALED_STRESS_MAX_VELOCITY),
     static_cast<int16_t>(HEARTBEAT_SCALED_STRESS_MAX_VELOCITY));
 
-  stress = std::clamp(
-    (static_cast<int32_t>(stress) * 256 + stressVelocity) / 256,
+  data.stress = std::clamp(
+    (static_cast<int32_t>(data.stress) * 256 + data.stressVelocity) / 256,
     static_cast<int32_t>(0),
     static_cast<int32_t>(255));
 
   // If stress got clamped, reduce velocity. Greatly reduces top/bottom stickiness
-  if((stress == 255 && stressVelocity > 0) || (stress == 0 && stressVelocity < 0)) {
-    stressVelocity /= 2;
+  if((data.stress == 255 && data.stressVelocity > 0) || (data.stress == 0 && data.stressVelocity < 0)) {
+    data.stressVelocity /= 2;
   }
 }
 
-void heartbeatPattern(CRGB (&strip)[NUM_LEDS], const unsigned long currentTime, unsigned long timeOffset = 0) {
-  static unsigned long lastTime = currentTime;
-  static unsigned long updateTime = 0;
-  static unsigned long animationTime = 0;
-  static unsigned long fpsTime = 0;
+void heartbeatPattern(CRGB (&strip)[NUM_LEDS], const unsigned long deltaTime, HeartbeatData& data) {
+  data.updateTime += deltaTime;
 
-  unsigned long deltaTime = currentTime - lastTime;
-  updateTime += deltaTime;
-  fpsTime += deltaTime;
-  lastTime = currentTime;
-
-  static uint8_t stress = 0;
-
-  if(updateTime > HEARTBEAT_DURATION_UPDATE) {
-    updateTime -= HEARTBEAT_DURATION_UPDATE;
-    updateStress(stress);
-  }
-
-  if(fpsTime > 1000) {
-    fpsTime -= 1000;
-    Serial.print("heartbeatPattern FPS: ");
-    Serial.println(FastLED.getFPS());
+  if(data.updateTime > HEARTBEAT_DURATION_UPDATE) {
+    data.updateTime -= HEARTBEAT_DURATION_UPDATE;
+    updateStress(data);
   }
 
   // Integer version of: deltaTime * ([0.0, 2.0] + 1)
-  animationTime += (deltaTime * ((stress + 1) * 2 + 256) * 256) / 65536;
+  data.animationTime += (deltaTime * ((data.stress + 1) * 2 + 256) * 256) / 65536;
   // Using 1024ms per heartbeat because the compiler turns % 1024 into bitwise math instead of a divide
-  animationTime %= 1024;
+  data.animationTime %= 1024;
 
   // Double gradient
-  CRGB backgroundColor = stress < 128
-    ? blend(backgroundCalmColor, backgroundExcitedColor, stress * 2)
-    : blend(backgroundExcitedColor, backgroundIntenseColor, (stress - 128) * 2);
+  CRGB backgroundColor = data.stress < 128
+    ? blend(backgroundCalmColor, backgroundExcitedColor, data.stress * 2)
+    : blend(backgroundExcitedColor, backgroundIntenseColor, (data.stress - 128) * 2);
 
   for(long currentPixelIndex = 0; currentPixelIndex < NUM_LEDS; ++currentPixelIndex) {
-    CRGB pulseColor(heartbeatPixelColor(currentPixelIndex, animationTime + timeOffset));
+    CRGB pulseColor(heartbeatPixelColor(currentPixelIndex, data.animationTime + data.animationOffset));
     pulseColor.fadeToBlackBy(dim8_raw(192));
 
     CRGB pixelColor(pulseColor + backgroundColor);
@@ -192,23 +191,37 @@ void heartbeatPattern(CRGB (&strip)[NUM_LEDS], const unsigned long currentTime, 
 }
 
 // ------- Main program
-CRGB strip[NUM_LEDS];
+CRGB strip1[NUM_LEDS];
+HeartbeatData heartbeatStripData1;
 
 void setup() {
   randomSeed(analogRead(0));
 
   Serial.begin(9600);
 
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(strip, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(strip1, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
 }
 
 void loop() {
-  unsigned long currentTime = millis();
+  const unsigned long currentTime = millis();
+  static unsigned long lastTime = currentTime;
+  unsigned long deltaTime = currentTime - lastTime;
 
-  heartbeatPattern(strip, currentTime);
+  heartbeatPattern(strip1, deltaTime, heartbeatStripData1);
+
+  FastLED.show();
+
+  lastTime = currentTime;
 
   FastLED.countFPS();
-  FastLED.show();
+  static unsigned long fpsTime = 0;
+  fpsTime += deltaTime;
+
+  if(fpsTime > 1000) {
+    fpsTime -= 1000;
+    Serial.print("heartbeatPattern FPS: ");
+    Serial.println(FastLED.getFPS());
+  }
 }
 
