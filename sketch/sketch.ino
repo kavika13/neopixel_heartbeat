@@ -35,9 +35,9 @@ template<typename T> constexpr const T& clamp(const T& value, const T& min_value
 
 //#define HEARTBEAT_DISABLE_FLASH
 
-const CHSV backgroundCalmColor(95, 200, 182);
-const CHSV backgroundExcitedColor(254, 200, 236);
-const CHSV backgroundIntenseColor(222, 200, 236);
+const CHSV backgroundCalmColor(230, 200, 182);
+const CHSV backgroundExcitedColor(190, 200, 236);
+const CHSV backgroundIntenseColor(190, 200, 236);
 
 struct HeartbeatData {
   HeartbeatData()
