@@ -27,30 +27,37 @@ template<typename T> constexpr const T& clamp(const T& value, const T& min_value
 };
 
 // ------- Global data
-#define DATA_PIN 7
-#define NUM_LEDS 59
-#define BRIGHTNESS (64 - 1)
+#define DATA_PIN 4
+#define NUM_LEDS 60
+#define BRIGHTNESS (128 - 1)
 
 // ------- Heartbeat effect
 
-const CHSV backgroundCalmColor(95, 209, 182);
-const CHSV backgroundExcitedColor(254, 92, 236);
-const CHSV backgroundIntenseColor(222, 209, 127);
+//#define HEARTBEAT_DISABLE_FLASH
+
+const CHSV backgroundCalmColor(95, 200, 182);
+const CHSV backgroundExcitedColor(254, 200, 236);
+const CHSV backgroundIntenseColor(222, 200, 236);
 
 struct HeartbeatData {
   HeartbeatData()
     : updateTime(0)
     , animationTime(0)
     , animationOffset(0)
+    , isStressed(false)
     , stress(0)
-    , stressVelocity(0) {
+    , stressCounter(0)
+    , timeSinceLastStress(0) {
   }
 
   unsigned long updateTime;
   unsigned long animationTime;
   unsigned long animationOffset;
-  uint8_t stress;
-  int16_t stressVelocity;
+  bool isStressed;
+  uint16_t stress;
+  uint32_t stressCounter;
+  unsigned long timeSinceLastStress;
+  unsigned long timeCurrentStress;
 };
 
 // Roughly approximate a heart beat:
@@ -60,25 +67,27 @@ struct HeartbeatData {
 // T = 120-440 ms, 0.9 at peak (modeled with sine curve, bottom-to-top-to-bottom)
 
 #define HEARTBEAT_OFFSET_R 0
-#define HEARTBEAT_DURATION_R 45
+#define HEARTBEAT_DURATION_R 200
 #define HEARTBEAT_AMPLITUDE_R 2.7f
 #define HEARTBEAT_WAVE_OFFSET_R 0.0f
 #define HEARTBEAT_WAVE_DURATION_R PI
 
-#define HEARTBEAT_OFFSET_T (120 - 1)
-#define HEARTBEAT_DURATION_T 320
-#define HEARTBEAT_AMPLITUDE_T 0.6f
+#define HEARTBEAT_OFFSET_T (250 - 1)
+#define HEARTBEAT_DURATION_T 300
+#define HEARTBEAT_AMPLITUDE_T 1.7f
 #define HEARTBEAT_WAVE_OFFSET_T (PI * 1.5)
 #define HEARTBEAT_WAVE_DURATION_T (PI * 2)
 
 #define HEARTBEAT_WAVE_SCALE_T (HEARTBEAT_AMPLITUDE_T / HEARTBEAT_AMPLITUDE_R)
 
 #define HEARTBEAT_UPDATES_PER_SECOND 50.0f
-#define HEARTBEAT_DURATION_UPDATE (3.0f * 1000.0f / HEARTBEAT_UPDATES_PER_SECOND)
-#define HEARTBEAT_DURATION_MAX_STRESS_CHANGE (1.0f * 1000.0f)
+#define HEARTBEAT_DURATION_UPDATE (1000.0f / HEARTBEAT_UPDATES_PER_SECOND)
+#define HEARTBEAT_DURATION_MAX_STRESS_CHANGE (2.0f * 1000.0f)
 #define HEARTBEAT_NUM_UPDATES_MAX_STRESS_CHANGE (HEARTBEAT_DURATION_MAX_STRESS_CHANGE / HEARTBEAT_DURATION_UPDATE)
-#define HEARTBEAT_SCALED_STRESS_MAX_VELOCITY static_cast<uint16_t>(65535.0f / HEARTBEAT_NUM_UPDATES_MAX_STRESS_CHANGE)
-#define HEARTBEAT_SCALED_STRESS_MAX_IMPULSE 128
+#define HEARTBEAT_STRESS_MAX_VELOCITY static_cast<uint16_t>(65535.0f / HEARTBEAT_NUM_UPDATES_MAX_STRESS_CHANGE)
+
+// TODO: The noise is periodic based on the update frequency - somehow reflect this
+#define HEARTBEAT_NOISE_COUNTER_INCREMENT 512
 
 // Prototypes necessary to work around bug: https://github.com/arduino/arduino-builder/issues/170
 constexpr float heartbeatWaveR(unsigned long milliseconds);
@@ -111,10 +120,10 @@ constexpr uint8_t heartbeatPulseAtTime(unsigned long milliseconds) {
   return static_cast<uint8_t>(
     255.0f
     * (isWithinDuration(milliseconds, HEARTBEAT_DURATION_R, HEARTBEAT_OFFSET_R)
-         ? heartbeatWaveR(milliseconds)
-         : (isWithinDuration(milliseconds, HEARTBEAT_DURATION_T, HEARTBEAT_OFFSET_T)
-              ? heartbeatWaveT(milliseconds)
-              : 0.0f)));
+        ? heartbeatWaveR(milliseconds)
+        : (isWithinDuration(milliseconds, HEARTBEAT_DURATION_T, HEARTBEAT_OFFSET_T)
+            ? heartbeatWaveT(milliseconds)
+            : 0.0f)));
 }
 
 // Helpers to statically generate our tables
@@ -136,29 +145,60 @@ const uint8_t heartbeatPulse[] PROGMEM = {
 
 CRGB heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long animationTime);
 CRGB heartbeatPixelColor(unsigned long currentPixelIndex, unsigned long animationTime) {
-  // Using 1024ms per heartbeat because the compiler turns % 1024 into bitwise math instead of a divide
-  uint8_t value = pgm_read_byte_near(heartbeatPulse + (animationTime + currentPixelIndex) % 1024);
-  return CRGB(value, value, value);
+  unsigned long animationIndex = animationTime + currentPixelIndex;
+
+  if (animationIndex < 1024) {
+    uint8_t value = pgm_read_byte_near(heartbeatPulse + animationIndex);
+    return CRGB(value, value, value);
+  } else {
+    return CRGB(0, 0, 0);
+  }
 }
 
 void updateStress(HeartbeatData& data) {
-  int16_t stressAcceleration = random(HEARTBEAT_SCALED_STRESS_MAX_IMPULSE * 2 + 1)
-    - HEARTBEAT_SCALED_STRESS_MAX_IMPULSE;
+  if (data.isStressed) {
+    data.timeCurrentStress += HEARTBEAT_DURATION_UPDATE;
 
-  data.stressVelocity += stressAcceleration;
-  data.stressVelocity = std::clamp(
-    data.stressVelocity,
-    static_cast<int16_t>(-HEARTBEAT_SCALED_STRESS_MAX_VELOCITY),
-    static_cast<int16_t>(HEARTBEAT_SCALED_STRESS_MAX_VELOCITY));
+    uint16_t noise = inoise16(data.stressCounter);
+    data.stressCounter += HEARTBEAT_NOISE_COUNTER_INCREMENT;
 
-  data.stress = std::clamp(
-    (static_cast<int32_t>(data.stress) * 256 + data.stressVelocity) / 256,
-    static_cast<int32_t>(0),
-    static_cast<int32_t>(255));
+    int16_t stressVelocity = static_cast<int16_t>(scale16(noise, HEARTBEAT_STRESS_MAX_VELOCITY * 2))
+      - HEARTBEAT_STRESS_MAX_VELOCITY;
+    Serial.println(HEARTBEAT_STRESS_MAX_VELOCITY);
 
-  // If stress got clamped, reduce velocity. Greatly reduces top/bottom stickiness
-  if((data.stress == 255 && data.stressVelocity > 0) || (data.stress == 0 && data.stressVelocity < 0)) {
-    data.stressVelocity /= 2;
+    int32_t newStress = data.stress;
+    newStress += stressVelocity;
+
+    newStress = std::clamp(
+        newStress,
+        static_cast<int32_t>(0),
+        static_cast<int32_t>(65535));
+
+    newStress -= scale16(256, newStress);
+
+    if (data.timeCurrentStress > 6000) {  // TODO: Make constant
+      newStress -= 512;      
+    }
+
+    if (newStress < 0) {
+      newStress = 0;
+    }
+
+    if (data.timeCurrentStress > 8000) {  // TODO: Make constant
+      data.isStressed = false;
+      data.timeCurrentStress = 0;
+      data.timeSinceLastStress = 0;
+    }
+
+    data.stress = newStress;
+  } else {
+    data.timeSinceLastStress += HEARTBEAT_DURATION_UPDATE;
+
+    if (data.timeSinceLastStress > 15000) {  // TODO: Make constant
+      data.isStressed = true;
+      data.timeCurrentStress = 0;
+      data.timeSinceLastStress = 0;
+    }
   }
 }
 
@@ -171,18 +211,22 @@ void heartbeatPattern(CRGB (&strip)[NUM_LEDS], const unsigned long deltaTime, He
   }
 
   // Integer version of: deltaTime * ([0.0, 2.0] + 1)
-  data.animationTime += (deltaTime * ((data.stress + 1) * 2 + 256) * 256) / 65536;
+  data.animationTime += deltaTime * ((static_cast<uint32_t>(data.stress) + 1) * 1.3 + 65536) / 65536;
   // Using 1024ms per heartbeat because the compiler turns % 1024 into bitwise math instead of a divide
-  data.animationTime %= 1024;
+  data.animationTime %= 2048;
 
   // Double gradient
-  CRGB backgroundColor = data.stress < 128
-    ? blend(backgroundCalmColor, backgroundExcitedColor, data.stress * 2)
-    : blend(backgroundExcitedColor, backgroundIntenseColor, (data.stress - 128) * 2);
+  CRGB backgroundColor = data.stress < 32768
+    ? blend(backgroundCalmColor, backgroundExcitedColor, data.stress * 2 / 256)
+    : blend(backgroundExcitedColor, backgroundIntenseColor, (data.stress - 32768) * 2 / 256);
 
-  for(long currentPixelIndex = 0; currentPixelIndex < NUM_LEDS; ++currentPixelIndex) {
+  for (long currentPixelIndex = 0; currentPixelIndex < NUM_LEDS; ++currentPixelIndex) {
     CRGB pulseColor(heartbeatPixelColor(currentPixelIndex, data.animationTime + data.animationOffset));
-    pulseColor.fadeToBlackBy(dim8_raw(192));
+    pulseColor.fadeToBlackBy(dim8_raw(222));
+
+#ifdef HEARTBEAT_DISABLE_FLASH
+    pulseColor = CRGB::Black;
+#endif
 
     CRGB pixelColor(pulseColor + backgroundColor);
 
@@ -190,16 +234,42 @@ void heartbeatPattern(CRGB (&strip)[NUM_LEDS], const unsigned long deltaTime, He
   }
 }
 
+void setupHeartbeatPattern(const unsigned long offsetTime, HeartbeatData& data) {
+  data.updateTime += offsetTime;
+
+  while (data.updateTime > HEARTBEAT_DURATION_UPDATE) {
+    data.updateTime -= HEARTBEAT_DURATION_UPDATE;
+    updateStress(data);
+  }
+}
+
 // ------- Main program
 CRGB strip1[NUM_LEDS];
+CRGB strip2[NUM_LEDS];
+CRGB strip3[NUM_LEDS];
+CRGB strip4[NUM_LEDS];
+CRGB strip5[NUM_LEDS];
 HeartbeatData heartbeatStripData1;
+HeartbeatData heartbeatStripData2;
+HeartbeatData heartbeatStripData3;
+HeartbeatData heartbeatStripData4;
+HeartbeatData heartbeatStripData5;
 
 void setup() {
-  randomSeed(analogRead(0));
-
   Serial.begin(9600);
 
   FastLED.addLeds<NEOPIXEL, DATA_PIN>(strip1, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN + 1>(strip2, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN + 2>(strip3, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN + 3>(strip4, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN + 4>(strip5, NUM_LEDS);
+
+  setupHeartbeatPattern(2200, heartbeatStripData1);
+  setupHeartbeatPattern(5800, heartbeatStripData2);
+  setupHeartbeatPattern(8400, heartbeatStripData3);
+  setupHeartbeatPattern(1700, heartbeatStripData4);
+  setupHeartbeatPattern(11900, heartbeatStripData5);
+
   FastLED.setBrightness(BRIGHTNESS);
 }
 
@@ -209,6 +279,10 @@ void loop() {
   unsigned long deltaTime = currentTime - lastTime;
 
   heartbeatPattern(strip1, deltaTime, heartbeatStripData1);
+  heartbeatPattern(strip2, deltaTime, heartbeatStripData2);
+  heartbeatPattern(strip3, deltaTime, heartbeatStripData3);
+  heartbeatPattern(strip4, deltaTime, heartbeatStripData4);
+  heartbeatPattern(strip5, deltaTime, heartbeatStripData5);
 
   FastLED.show();
 
